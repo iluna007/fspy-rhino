@@ -1,6 +1,6 @@
 # fSpy Import Camera - Un solo componente Grasshopper
 # SPDX-License-Identifier: MIT
-# Copyright (c) 2026 Iker Luna - https://github.com/iluna007/fspy-rhino
+# Copyright (c) 2026 Iker Luna - https://github.com/iluna007/fspy-rhino-gh
 # Entradas: json_path_or_string, Apply, image_path (opcional), BakeImage (opcional, True = insertar imagen en Rhino).
 # Salidas: CameraLocation, CameraTarget, CameraUp, FOV_h_deg, FOV_v_deg, ImageW, ImageH, PrincipalPoint,
 #         Applied, ImageCorners, ImageContour, ImageSurface, Error

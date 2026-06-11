@@ -1,10 +1,17 @@
-# fspy-rhino
+# fspy-rhino-gh
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **Código abierto** — importador de cámara [fSpy](https://fspy.io/) para **Rhino** y **Grasshopper**. Lee el JSON exportado por fSpy y aplica posición, orientación, FOV e imagen de referencia en el viewport o en el modelo 3D.
 
 Puedes usar, modificar y distribuir este proyecto libremente bajo la [licencia MIT](LICENSE).
+
+## Apoyar a fSpy
+
+Este importador usa [fSpy](https://fspy.io/), software **gratuito y de código abierto** creado por **Stuffmatic**. Si te resulta útil, considera contribuir al desarrollo de fSpy desde su página oficial:
+
+**[https://fspy.io/](https://fspy.io/)** — en la web encontrarás la opción de donar al creador (pay what you want).
+
 ## Requisitos
 
 - Rhino 6 / 7 / 8 con Grasshopper
@@ -91,8 +98,10 @@ Solo debes conservar el aviso de copyright y la licencia en las copias o derivad
 
 ### Relación con fSpy
 
-Este repositorio **no incluye** el código de [fSpy](https://github.com/stuffmatic/fSpy). fSpy es un proyecto independiente de [stuffmatic](https://fspy.io/), distribuido bajo **GPL-3.0**. Aquí solo se lee el JSON que exportas desde fSpy; para usar fSpy necesitas cumplir con su propia licencia.
+Este repositorio **no incluye** el código de [fSpy](https://github.com/stuffmatic/fSpy). fSpy es un proyecto independiente de [Stuffmatic](https://fspy.io/), distribuido bajo **GPL-3.0**. Aquí solo se lee el JSON que exportas desde fSpy; para usar fSpy necesitas cumplir con su propia licencia.
 
-### Contribuciones
+### Contribuciones a este proyecto (fspy-rhino-gh)
 
-Las contribuciones son bienvenidas. Al enviar cambios, aceptas que se publiquen bajo la misma licencia MIT.
+Las contribuciones a este repositorio son bienvenidas. Al enviar cambios, aceptas que se publiquen bajo la misma licencia MIT.
+
+Repositorio: [github.com/iluna007/fspy-rhino-gh](https://github.com/iluna007/fspy-rhino-gh)
