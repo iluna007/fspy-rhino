@@ -1,0 +1,275 @@
+# fSpy Import Camera - Un solo componente Grasshopper
+# Entradas: json_path_or_string, Apply, image_path (opcional), BakeImage (opcional, True = insertar imagen en Rhino).
+# Salidas: CameraLocation, CameraTarget, CameraUp, FOV_h_deg, FOV_v_deg, ImageW, ImageH, PrincipalPoint,
+#         Applied, ImageCorners, ImageContour, ImageSurface, Error
+# ImageSurface = superficie rectangular (para bake). Si BakeImage=True, la imagen se agrega al documento como PictureFrame.
+# Si la imagen se ve corrida respecto al recuadro, suele ser por el punto principal (principalPoint) en fSpy: exporta con principal en centro o revisa el JSON.
+# Ver https://fspy.io/
+
+import math
+import json
+import os
+from Rhino.Geometry import Point3d, Vector3d, Plane, Polyline, PolylineCurve, NurbsSurface
+import Rhino
+
+# --- Entradas: json_path_or_string, Apply, image_path, BakeImage ---
+try:
+    json_path_or_string
+except NameError:
+    json_path_or_string = None
+try:
+    Apply
+except NameError:
+    Apply = True
+try:
+    image_path
+except NameError:
+    image_path = None
+try:
+    BakeImage
+except NameError:
+    BakeImage = False
+
+def parse_fspy(json_input):
+    r = {"camera_location": None, "camera_direction": None, "camera_up": None,
+         "camera_target": None, "horizontal_fov_rad": None, "vertical_fov_rad": None,
+         "image_width": None, "image_height": None, "principal_point": None,
+         "target_distance": 100.0, "error": None}
+    try:
+        if json_input is None:
+            r["error"] = "Conecta un Panel con la ruta al .json (ej: C:\\Carpeta\\camara.json)"
+            return r
+        s = str(json_input).strip()
+        if not s or s.lower() == "none":
+            r["error"] = "Conecta un Panel con la ruta al .json (ej: C:\\Carpeta\\camara.json)"
+            return r
+        if s.startswith("{"):
+            data = json.loads(s)
+        else:
+            # En Windows usar / evita problemas con \ en rutas (ej. "Escuela de arquitectura")
+            path = s.replace("\\", "/")
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except TypeError:
+                with open(path, "r") as f:
+                    data = json.load(f)
+        rows = data.get("cameraTransform", {}).get("rows")
+        if not rows or len(rows) < 4:
+            r["error"] = "Invalid cameraTransform"
+            return r
+        tx, ty, tz = float(rows[0][3]), float(rows[1][3]), float(rows[2][3])
+        r["camera_location"] = Point3d(tx, ty, tz)
+        zx, zy, zz = float(rows[0][2]), float(rows[1][2]), float(rows[2][2])
+        look = Vector3d(-zx, -zy, -zz)
+        if look.Length > 1e-10:
+            look.Unitize()
+        r["camera_direction"] = look
+        ux, uy, uz = float(rows[0][1]), float(rows[1][1]), float(rows[2][1])
+        up = Vector3d(ux, uy, uz)
+        if up.Length > 1e-10:
+            up.Unitize()
+        r["camera_up"] = up
+        td = 100.0
+        try:
+            td = max(0.1, float(data.get("targetDistance", 100)))
+        except (TypeError, ValueError):
+            pass
+        r["target_distance"] = td
+        r["camera_target"] = Point3d(tx + look.X*td, ty + look.Y*td, tz + look.Z*td)
+        r["horizontal_fov_rad"] = float(data.get("horizontalFieldOfView", 0))
+        r["vertical_fov_rad"] = float(data.get("verticalFieldOfView", 0))
+        r["image_width"] = int(data.get("imageWidth", 0))
+        r["image_height"] = int(data.get("imageHeight", 0))
+        r["principal_point"] = data.get("principalPoint", {"x": 0, "y": 0})
+    except Exception as e:
+        r["error"] = str(e)
+    return r
+
+def apply_to_viewport(data, do_apply):
+    if not do_apply or data.get("error") or data["camera_location"] is None:
+        return False, (data.get("error") or "Apply off or no camera")
+    doc = Rhino.RhinoDoc.ActiveDoc
+    if doc is None:
+        return False, "No active document"
+    view = doc.Views.ActiveView
+    if view is None:
+        return False, "No active view"
+    vp = view.ActiveViewport
+    if vp is None:
+        return False, "No active viewport"
+    try:
+        vp.SetCameraLocations(data["camera_target"], data["camera_location"])
+        if data["camera_up"] and data["camera_up"].Length > 1e-10:
+            vp.CameraUp = data["camera_up"]
+        if not vp.IsPerspectiveProjection:
+            vp.ChangeToPerspectiveProjection(True)
+        fov_v = data.get("vertical_fov_rad") or (math.pi * 0.25)
+        vp.CameraAngle = fov_v * 0.5  # half-angle in radians
+        view.Redraw()
+        doc.Views.Redraw()
+        return True, "OK"
+    except Exception as e:
+        return False, str(e)
+
+def set_background_image(doc, data, img_path):
+    """Pone la imagen como fondo del viewport activo (como Blender), alineada con la camara."""
+    if not img_path or not data.get("camera_location") or data.get("error"):
+        return False, "Sin imagen o sin datos de camara"
+    s = str(img_path).strip()
+    if not s or s.lower() == "none":
+        return False, "Ruta de imagen vacia"
+    path = s.replace("\\", "/")
+    if not os.path.isfile(path):
+        return False, "No se encontro el archivo de imagen"
+    view = doc.Views.ActiveView
+    if view is None:
+        return False, "No hay vista activa"
+    vp = view.ActiveViewport
+    if vp is None:
+        return False, "No hay viewport"
+    try:
+        loc = data["camera_location"]
+        target = data["camera_target"]
+        up = data["camera_up"]
+        look = Vector3d(target.X - loc.X, target.Y - loc.Y, target.Z - loc.Z)
+        if look.Length < 1e-10:
+            return False, "Target = Location"
+        look.Unitize()
+        if up is None or up.Length < 1e-10:
+            up = Vector3d(0, 0, 1)
+        else:
+            up = Vector3d(up.X, up.Y, up.Z)
+            up.Unitize()
+        right = Vector3d.CrossProduct(look, up)
+        if right.Length > 1e-10:
+            right.Unitize()
+        else:
+            right = Vector3d(1, 0, 0)
+        td = data.get("target_distance") or 100.0
+        hfov = data.get("horizontal_fov_rad") or (math.pi * 0.5)
+        vfov = data.get("vertical_fov_rad") or (math.pi * 0.5)
+        w = 2.0 * td * math.tan(hfov * 0.5)
+        h = 2.0 * td * math.tan(vfov * 0.5)
+        pl = Plane(target, right, up)
+        vp.SetTraceImage(path, pl, w, h, False, False)
+        view.Redraw()
+        doc.Views.Redraw()
+        return True, "OK"
+    except Exception as e:
+        return False, str(e)
+
+def image_plane_geometry(data):
+    """Devuelve las 4 esquinas del plano de imagen en 3D, el contorno (polilinea cerrada) y la superficie. Centro = CameraTarget."""
+    if data.get("camera_location") is None or data.get("camera_target") is None or data.get("error"):
+        return None, None, None
+    try:
+        loc = data["camera_location"]
+        target = data["camera_target"]
+        up = data["camera_up"]
+        look = Vector3d(target.X - loc.X, target.Y - loc.Y, target.Z - loc.Z)
+        if look.Length < 1e-10:
+            return None, None, None
+        look.Unitize()
+        if up is None or up.Length < 1e-10:
+            up = Vector3d(0, 0, 1)
+        else:
+            up = Vector3d(up.X, up.Y, up.Z)
+            up.Unitize()
+        right = Vector3d.CrossProduct(look, up)
+        if right.Length > 1e-10:
+            right.Unitize()
+        else:
+            right = Vector3d(1, 0, 0)
+        td = data.get("target_distance") or 100.0
+        hfov = data.get("horizontal_fov_rad") or (math.pi * 0.5)
+        vfov = data.get("vertical_fov_rad") or (math.pi * 0.5)
+        w = 2.0 * td * math.tan(hfov * 0.5)
+        h = 2.0 * td * math.tan(vfov * 0.5)
+        half_w = w * 0.5
+        half_h = h * 0.5
+        # Esquinas: abajo-izq, abajo-der, arriba-der, arriba-izq (centro = target)
+        bl = Point3d(target.X - right.X*half_w - up.X*half_h, target.Y - right.Y*half_w - up.Y*half_h, target.Z - right.Z*half_w - up.Z*half_h)
+        br = Point3d(target.X + right.X*half_w - up.X*half_h, target.Y + right.Y*half_w - up.Y*half_h, target.Z + right.Z*half_w - up.Z*half_h)
+        tr = Point3d(target.X + right.X*half_w + up.X*half_h, target.Y + right.Y*half_w + up.Y*half_h, target.Z + right.Z*half_w + up.Z*half_h)
+        tl = Point3d(target.X - right.X*half_w + up.X*half_h, target.Y - right.Y*half_w + up.Y*half_h, target.Z - right.Z*half_w + up.Z*half_h)
+        corners = [bl, br, tr, tl]
+        pline = Polyline([bl, br, tr, tl, bl])
+        contour = PolylineCurve(pline)
+        try:
+            surface = NurbsSurface.CreateFromCorners(bl, br, tr, tl)
+        except Exception:
+            surface = None
+        return corners, contour, surface
+    except Exception:
+        return None, None, None
+
+def add_picture_frame_to_doc(doc, data, img_path):
+    """Inserta la imagen en el documento de Rhino como PictureFrame (visible y guardable)."""
+    if not doc or not img_path or not data.get("camera_location") or data.get("error"):
+        return None, "Sin doc, imagen o datos"
+    s = str(img_path).strip().replace("\\", "/")
+    if not s or s.lower() == "none" or not os.path.isfile(s):
+        return None, "Ruta de imagen no valida"
+    res = image_plane_geometry(data)
+    if res[0] is None:
+        return None, "No se pudo calcular el plano de imagen"
+    corners, contour, surface = res
+    bl, br, tr, tl = corners[0], corners[1], corners[2], corners[3]
+    right = Vector3d(br.X - bl.X, br.Y - bl.Y, br.Z - bl.Z)
+    up = Vector3d(tl.X - bl.X, tl.Y - bl.Y, tl.Z - bl.Z)
+    w = right.Length
+    h = up.Length
+    if w < 1e-10 or h < 1e-10:
+        return None, "Plano degenerado"
+    right.Unitize()
+    up.Unitize()
+    plane_bl = Plane(bl, right, up)
+    try:
+        guid = doc.Objects.AddPictureFrame(plane_bl, s, False, w, h, True, False)
+        doc.Views.Redraw()
+        return guid, None
+    except Exception as e:
+        return None, str(e)
+
+# Parse
+data = parse_fspy(json_path_or_string)
+err = data.get("error")
+
+# Salidas: si hay error, posicion/target salen como (0,0,0); mira "Error" para el motivo.
+CameraLocation = data.get("camera_location") if data.get("camera_location") is not None else Point3d(0, 0, 0)
+CameraTarget = data.get("camera_target") if data.get("camera_target") is not None else Point3d(0, 0, 0)
+CameraUp = data.get("camera_up")
+FOV_h_deg = math.degrees(data["horizontal_fov_rad"]) if data.get("horizontal_fov_rad") else None
+FOV_v_deg = math.degrees(data["vertical_fov_rad"]) if data.get("vertical_fov_rad") else None
+ImageW = data.get("image_width")
+ImageH = data.get("image_height")
+PrincipalPoint = data.get("principal_point")
+
+img_corners, img_contour, img_surface = image_plane_geometry(data) if not err else (None, None, None)
+ImageCorners = img_corners
+ImageContour = img_contour
+ImageSurface = img_surface
+
+Applied = False
+if not err and Apply:
+    applied_ok, msg = apply_to_viewport(data, True)
+    Applied = applied_ok
+    if not applied_ok and msg:
+        err = (err or "") + ("; " if err else "") + msg
+    if applied_ok and image_path:
+        doc = Rhino.RhinoDoc.ActiveDoc
+        if doc:
+            bg_ok, bg_msg = set_background_image(doc, data, image_path)
+            if not bg_ok and bg_msg:
+                err = (err or "") + ("; Imagen fondo: " if err else "Imagen fondo: ") + bg_msg
+if not err and BakeImage and image_path:
+    doc = Rhino.RhinoDoc.ActiveDoc
+    if doc:
+        pf_guid, pf_msg = add_picture_frame_to_doc(doc, data, image_path)
+        if pf_msg:
+            err = (err or "") + ("; Bake imagen: " if err else "Bake imagen: ") + pf_msg
+
+Error = err
+if err:
+    print("fSpy: " + str(err))

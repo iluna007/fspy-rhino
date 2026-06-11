@@ -1,0 +1,121 @@
+# fSpy Apply to View - Grasshopper Python component
+# Sets the active Rhino viewport from fSpy camera parameters.
+# Connect outputs from "fSpy Parse JSON" or provide CameraLocation, CameraTarget, CameraUp, FOV.
+# See https://fspy.io/ - "Importing to other applications"
+
+import math
+import Rhino
+
+# --- Inputs (rename in component) ---
+# CameraLocation (Point3d), CameraTarget (Point3d), CameraUp (Vector3d)
+# FOV_vertical_deg (float) - full vertical FOV in degrees; or use FOV_horizontal_deg
+# ImageW, ImageH (int) - optional; if set, viewport aspect can match image
+# Apply (bool) - if True, sets the active viewport
+
+try:
+    CameraLocation
+except NameError:
+    CameraLocation = None
+try:
+    CameraTarget
+except NameError:
+    CameraTarget = None
+try:
+    CameraUp
+except NameError:
+    CameraUp = None
+try:
+    FOV_vertical_deg
+except NameError:
+    FOV_vertical_deg = 45.0
+try:
+    FOV_horizontal_deg
+except NameError:
+    FOV_horizontal_deg = None
+try:
+    ImageW
+except NameError:
+    ImageW = None
+try:
+    ImageH
+except NameError:
+    ImageH = None
+try:
+    Apply
+except NameError:
+    Apply = True
+
+Success = False
+Message = ""
+
+def set_rhino_camera(loc, target, up, fov_vertical_deg, fov_horizontal_deg, image_w, image_h, do_apply):
+    """Set active viewport camera from fSpy-style parameters."""
+    if not do_apply or loc is None or target is None:
+        return False, "Apply is False or missing CameraLocation/CameraTarget"
+    
+    doc = Rhino.RhinoDoc.ActiveDoc
+    if doc is None:
+        return False, "No active Rhino document"
+    
+    view = doc.Views.ActiveView
+    if view is None:
+        return False, "No active view"
+    
+    vp = view.ActiveViewport
+    if vp is None:
+        return False, "No active viewport"
+    
+    try:
+        # 1. Set camera position and target (viewport matches "camera position" and "camera orientation")
+        vp.SetCameraLocations(target, loc)
+        
+        # 2. Set camera up vector
+        if up is not None and up.Length > 1e-10:
+            vp.CameraUp = up
+        
+        # 3. Ensure perspective projection
+        if not vp.IsPerspectiveProjection:
+            vp.ChangeToPerspectiveProjection(True)
+        
+        # 4. Set field of view (Rhino uses half-angle in radians for CameraAngle)
+        # Use vertical FOV so aspect ratio can be matched to image dimensions
+        fov_v_deg = fov_vertical_deg if fov_vertical_deg is not None and fov_vertical_deg > 0 else 45.0
+        if fov_horizontal_deg is not None and fov_horizontal_deg > 0 and (image_w and image_h):
+            # Prefer horizontal FOV if we have image aspect
+            half_rad = math.radians(fov_horizontal_deg * 0.5)
+        else:
+            half_rad = math.radians(fov_v_deg * 0.5)
+        vp.CameraAngle = half_rad
+        
+        # 5. Optional: match viewport to image dimensions (aspect ratio)
+        # User can resize viewport manually; we don't change viewport size here to avoid disrupting layout.
+        # To match image aspect: set viewport width/height ratio = ImageW/ImageH.
+        
+        view.Redraw()
+        doc.Views.Redraw()
+        return True, "Camera set: position, target, up, FOV applied."
+    except Exception as e:
+        return False, str(e)
+
+# Use vertical FOV if provided, else derive from horizontal and aspect
+fov_v = FOV_vertical_deg
+if FOV_horizontal_deg is not None and ImageW and ImageH and ImageH > 0:
+    # vertical = 2 * atan(tan(hFOV/2) * height/width)
+    half_h_rad = math.radians(FOV_horizontal_deg * 0.5)
+    fov_v = math.degrees(2.0 * math.atan(math.tan(half_h_rad) * float(ImageH) / float(ImageW)))
+elif fov_v is None:
+    fov_v = 45.0
+
+Success, Message = set_rhino_camera(
+    CameraLocation,
+    CameraTarget,
+    CameraUp,
+    fov_v,
+    FOV_horizontal_deg,
+    ImageW,
+    ImageH,
+    Apply
+)
+
+if not Success and Message:
+    print("fSpy Apply: " + Message)
